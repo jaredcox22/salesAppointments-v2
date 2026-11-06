@@ -1,0 +1,441 @@
+<?php
+$start_time = microtime(true);
+
+    if (isset($_SERVER['HTTP_ORIGIN'])) {
+        // Decide if the origin in $_SERVER['HTTP_ORIGIN'] is one
+        // you want to allow, and if so:
+        header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
+        header('Access-Control-Allow-Credentials: true');
+        header('Access-Control-Max-Age: 86400');    // cache for 1 day
+    }
+
+    // Access-Control headers are received during OPTIONS requests
+    if (array_key_exists('REQUEST_METHOD',$_SERVER) && $_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+
+        if (isset($_SERVER['HTTP_ACCESS_CONTROL_REQUEST_METHOD']))
+            // may also be using PUT, PATCH, HEAD etc
+            header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+
+        if (isset($_SERVER['HTTP_ACCESS_CONTROL_REQUEST_HEADERS']))
+            header("Access-Control-Allow-Headers: {$_SERVER['HTTP_ACCESS_CONTROL_REQUEST_HEADERS']}");
+
+        exit(0);
+    }
+	if(isset($_GET['date'])){
+		$date = date("Y-m-d",strtotime($_GET['date']));
+	}else{
+		$date = date("Y-m-d");
+	}
+	$twoWeekDate = date("Y-m-d",strtotime("$date + 2 weeks"));
+
+//	Daylight Savings Settings
+	$realDaylightSavings = date('I',strtotime($twoWeekDate));
+
+//	Hardcoding Daylight Savings to always on
+	$daylightSavings = 1;
+
+
+//	if(isset($_GET['rep']) && $_GET['rep'] == ''){
+		if(isset($_GET['product1']) && $_GET['product1'] != '' && $_GET['product1'] != 'undefined'){
+			$setProduct1 = $_GET['product1'];
+		}
+        	if(isset($_GET['product2']) && $_GET['product2'] != '' && $_GET['product2'] != 'undefined'){
+	                $setProduct2 = $_GET['product2'];
+        	}
+	        if(isset($_GET['product3']) && $_GET['product3'] != '' && $_GET['product3'] != 'undefined'){
+        	        $setProduct3 = $_GET['product3'];
+	        }
+//	}
+
+
+	if($daylightSavings == '1' && date('w',strtotime($date)) != 6){
+		$apptTimes = array(
+	                '10:00' => array('start' => '10:00', 'end' => '13:00'),
+        	        '13:00' => array('start' => '13:00', 'end' => '16:00'),
+                	'16:00' => array('start' => '16:00', 'end' => '19:00'),
+	                '19:00' => array('start' => '19:00', 'end' => '22:00')
+        	);
+	}else{
+		$apptTimes = array(
+			'09:00' => array('start' => '09:00', 'end' => '12:00'),
+                	'12:00' => array('start' => '12:00', 'end' => '15:00'),
+	                '15:00' => array('start' => '15:00', 'end' => '18:00'),
+        	        '18:00' => array('start' => '18:00', 'end' => '21:00')
+		);
+	}
+
+	if($realDaylightSavings != '1' && (strpos($setProduct1,'Roof') !== false || strpos($setProduct2,'Roof')  !== false || strpos($setProduct3,'Roof')  !== false || strpos($setProduct1,'Flat') !== false || strpos($setProduct2,'Flat')  !== false || strpos($setProduct3,'Flat')  !== false || strpos($setProduct1,'SFP') !== false || strpos($setProduct2,'SFP')  !== false || strpos($setProduct3,'SFP')  !== false)){
+ 		unset($apptTimes['18:00']);
+		unset($apptTimes['19:00']);
+	}
+
+	if($realDaylightSavings != '1' && date('w',strtotime($date)) == '6' && (strpos($setProduct1,'SFP') !== false || strpos($setProduct2,'SFP')  !== false || strpos($setProduct3,'SFP')  !== false )){
+		$apptTimes = array();
+	}
+
+	$times = $apptTimes;
+        foreach($times as $i => $time){
+		$start = $time['start'];
+		$end = $time['end'];
+                $times[$i]['start'] = date('Y-m-d H:i',strtotime("$date $start"));
+		$times[$i]['start'] = strtotime($times[$i]['start']);
+		$times[$i]['end'] = date('Y-m-d H:i',strtotime("$date $end"));
+		$times[$i]['end'] = strtotime($times[$i]['end']);
+        }
+
+        require_once("/home/shared/functions.php");
+        require_once("/home/shared/db.php");
+        $db = new db('salesDashboard');
+        $api_endpoint = 'http://intserver-api';
+	$storedData = $db->query("SELECT `name`,`value`,`dateTime` as `updated` FROM salesDashboard.storedData ORDER BY updated DESC;");
+
+	foreach($storedData as $row => $values){
+			$index = $values['name'];
+			if(!isset($$index)){
+				$$index = json_decode(base64_decode($values['value']),true);
+			}
+	}
+
+
+        if(isset($_GET['rep']) && $_GET['rep'] != ''){
+                if(strpos($_GET['rep'],'~')){
+                        $_GET['rep'] = explode('~',$_GET['rep'])[0];
+                }
+                foreach($LPSalesmen as $index => $salesman){
+                        $first = explode(',',$salesman['name'])[1];
+                        $last = explode(',',$salesman['name'])[0];
+                        if(trim($_GET['rep']) != trim("$first $last")){
+                                unset($LPSalesmen[$index]);
+                        }
+                }
+        }else{
+                foreach($LPSalesmen as $index => $salesman){
+                        if(array_key_exists('rep_only',$salesman) && $salesman['rep_only'] == 1){
+                                unset($LPSalesmen[$index]);
+                        }
+                }
+        }
+        if(isset($_GET['zip'])){
+		$newReps = array();
+                $zip = $_GET['zip'];
+		$dow = date('w',strtotime($date));
+                $zips = $db->query("SELECT * FROM salesDashboard.detroit_zips WHERE zip = '$zip' AND active = '1'");
+		$days = $db->query("SELECT * FROM salesDashboard.detroit_days WHERE dow = '$dow' AND active = '1'");
+                if(count($zips) > 0){
+			if($date == date("Y-m-d")){
+				$times = array();
+				foreach($apptTimes as $index => $value){
+					$times[$index] = array();
+				}
+				print_r(json_encode(array("date"=>$date,"availibility"=>$times)));
+				die;
+			}
+			foreach($LPSalesmen as $rep_index => $rep){
+				foreach($days as $rep_day){
+					if($rep_day['sales_rep_id'] == $rep['id']){
+						$newReps[] = $rep;
+					}
+				}
+			}
+			$LPSalesmen = $newReps;
+                }elseif(count($days) > 0){
+			$badReps = array();
+			foreach($days as $rep_day){
+				$badReps[] = $rep_day['sales_rep_id'];
+			}
+                        foreach($LPSalesmen as $rep_index => $rep){
+                                if(!in_array($rep['id'],$badReps)){
+                                        $newReps[] = $rep;
+                                }
+                        }
+			$LPSalesmen = $newReps;
+                }
+        }
+
+
+	$apptSchedule = $db->query("SELECT data from apptSchedule WHERE date = '$date' ORDER BY updated DESC LIMIT 1");
+	if(is_array($apptSchedule) && count($apptSchedule) > 0){
+		$apptSchedule = json_decode(base64_decode($apptSchedule[0]['data']),true);
+	}else{
+                $url = "$api_endpoint/lp/getApptSchedule.php?start=$date&end=$date";
+                $found = 'false';
+                $attempts = 0;
+
+                while($found == 'false' && $attempts < 5){
+                        $attempts++;
+                        $response = curlCall($url);
+                        if(is_array($response) && count($response) > 0){
+                                $found = 'true';
+                                $apptSchedule = $response;
+                                break;
+                        }
+                }
+	}
+
+
+	$dateTime = strtotime($date);
+	foreach($apptSchedule as $i => $appt){
+		$start = $appt['start'];
+		$start = date('Y-m-d',strtotime($start));
+		$start = strtotime($start);
+		if($start > $dateTime){
+			unset($apptSchedule[$i]);
+		}
+	}
+	$availible = array();
+        $appointments = array();
+        foreach($apptSchedule as $appt){
+		$details = strip_tags($appt['details']);
+		$source = '';
+		$sub = '';
+		if(strpos($details,'Source:') !== false){
+			$source = trim(explode('Market:',explode('Source:',$details)[1])[0]);
+       		        $sub = trim(explode(':',$source)[1]);
+			$source = trim(explode(':',$source)[0]);
+		}
+		$apptType = $appt['appttype'];
+                $productID = $appt['productid'];
+		$startDate = date("Y-m-d",strtotime($appt['start']));
+                $time = date('H:i',strtotime($appt['start']));
+		if($daylightSavings == '0' || ($daylightSavings == '1' && date('w',strtotime($startDate)) == 6)){
+			if($time == '13:00' || $time == '16:00' || $time == '19:00'){
+				$time = date('H:i',strtotime($time.' - 1 hour'));
+			}
+		}elseif($daylightSavings == '1'){
+			if($time == '12:00' || $time == '15:00' || $time == '18:00'){
+                                $time = date('H:i',strtotime($time.' + 1 hour'));
+                        }
+		}
+		$endDate = date("Y-m-d",strtotime($appt['end']));
+		$end = date('H:i',strtotime($appt['end']));
+		if($daylightSavings == '0'  || ($daylightSavings == '1' && date('w',strtotime($endDate)) == 6)){
+                        if($end == '13:00' || $end == '16:00' || $end == '19:00'){
+                                $end = date('H:i',strtotime($end.' - 1 hour'));
+                        }
+                }elseif($daylightSavings == '1'){
+                        if($end == '12:00' || $end == '15:00' || $end == '18:00'){
+                                $end = date('H:i',strtotime($end.' + 1 hour'));
+                        }
+                }
+
+		$start = strtotime("$startDate $time");
+		$end = strtotime("$endDate $end");
+		$takenTimes = array();
+		foreach($times as $possible){
+			if(($possible['start'] <= $start && $start < $possible['end']) || ($possible['start'] < $end && $end <= $possible['end']) || ($start < $possible['start'] && $possible['end'] < $end)){
+				$takenTimes[] = $possible['start'];
+			}
+		}
+		if($apptType == 'background'){
+			$availible[$time][] = $appt['salesrepname'];
+                }
+		if($productID != 'driveTime' && $apptType != 'background'){
+			foreach($takenTimes as $time){
+				$time = date('H:i',$time);
+		                $appointments[$time][$productID][] = array($appt['salesrepname'],'source'=>array('source'=>$source,'sub'=>$sub));
+			}
+		}
+        }
+	ksort($appointments);
+
+
+	$availibilty = array();
+        foreach($apptTimes as $i => $hour){
+		$hour = $hour['start'];
+                $availibility[$hour] = $LPSalesmen;
+        }
+
+	foreach($availibility as $hour => $salesmanInfo){
+		foreach($salesmanInfo as $i => $salesman){
+			if((!isset($availible[$hour])) || (!array_key_exists('name',$salesman) || !in_array($salesman['name'],$availible[$hour]))){
+				unset($availibility[$hour][$i]);
+			}
+		}
+	}
+
+	if(isset($_GET['canvass']) && $_GET['canvass'] == 'true' && $date != date('Y-m-d')){
+		$takenSlots = array();
+		foreach($appointments as $hour => $products){
+			$takenSlots[$hour] = 0;
+			foreach($products as $product => $salesReps){
+				foreach($salesReps as $salesrep){
+					if($salesrep['source']['sub'] == 'Canvass'){
+						$takenSlots[$hour] = $takenSlots[$hour] + 1;
+					}
+				}
+			}
+		}
+		foreach($appointments as $hour => $productIDs){
+        	        foreach($productIDs as $productID => $salesmen){
+				if($productID == ''){
+	                	        foreach($salesmen as $salesman){
+                	        	        $search = $salesman[0];
+        	                        	foreach($availibility[$hour] as $i => $salesman){
+	                        	                if($salesman['name'] == $search){
+        	                        	                unset($availibility[$hour][$i]);
+                	                        	}
+	                	                }
+        	                	}
+	                	}
+			}
+	        }
+
+
+                if(isset($setProduct1)){
+                        foreach($availibility as $hour => $salesmen){
+                                foreach($salesmen as $index => $info){
+                                        $good = 'false';
+                                        foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+                                                if($allowed_product == $setProduct1){
+                                                        $good = 'true';
+                                                        break;
+                                                }
+                                        }
+                                        if($good == 'false'){
+                                                unset($availibility[$hour][$index]);
+                                        }
+                                }
+                        }
+                }
+                if(isset($setProduct2)){
+                        foreach($availibility as $hour => $salesmen){
+                                foreach($salesmen as $index => $info){
+                                        $good = 'false';
+                                        foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+                                                if($allowed_product == $setProduct2){
+                                                        $good = 'true';
+                                                        break;
+                                                }
+                                        }
+                                        if($good == 'false'){
+                                                unset($availibility[$hour][$index]);
+                                        }
+                                }
+                        }
+                }
+                if(isset($setProduct3)){
+                        foreach($availibility as $hour => $salesmen){
+                                foreach($salesmen as $index => $info){
+                                        $good = 'false';
+                                        foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+                                                if($allowed_product == $setProduct3){
+                                                        $good = 'true';
+                                                        break;
+                                                }
+                                        }
+                                        if($good == 'false'){
+                                                unset($availibility[$hour][$index]);
+                                        }
+                                }
+                        }
+                }
+
+                $availibleSlots = array();
+                foreach($availibility as $hour => $salesReps){
+                        $availibleSlots[$hour] = count($salesReps);
+                }
+
+		$availibility = array();
+
+		$multiplier = 1.5;
+
+		foreach($availibleSlots as $hour => $count){
+			if($count * $multiplier > $takenSlots[$hour]){
+				$availibility[$hour][]['id'] = '0';
+			}
+		}
+
+
+		$availibility = array('date' => $date,'availibility' => $availibility);
+/*
+                foreach($availibility['availibility'] as $i => $hours){
+                        $hours = array_values($hours);
+                        $availibility['availibility'][$i] = $hours;
+                }
+*/
+
+                print_r(json_encode($availibility));
+		die;
+	}else{
+		foreach($appointments as $hour => $productIDs){
+			foreach($productIDs as $productID => $salesmen){
+				foreach($salesmen as $salesman){
+					$search = $salesman[0];
+					foreach($availibility[$hour] as $i => $salesman){
+/*
+						if(isset($_GET['rep']) && $_GET['rep'] != ''){
+							$rep_id = explode("~",$_GET['rep']);
+							if($salesman['id'] != $rep_id){
+								print_r($rep_id);
+								unset($availibility[$hour][$i]);
+							}
+						}
+*/
+						if($salesman['name'] == $search){
+							unset($availibility[$hour][$i]);
+						}
+					}
+				}
+			}
+		}
+		if(isset($setProduct1) && $setProduct1 != ''){
+			foreach($availibility as $hour => $salesmen){
+				foreach($salesmen as $index => $info){
+					$good = 'false';
+					foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+						if($allowed_product == $setProduct1){
+							$good = 'true';
+							break;
+						}
+					}
+					if($good == 'false' && !$_GET['rep']){
+						unset($availibility[$hour][$index]);
+					}
+				}
+			}
+        	}
+	        if(isset($setProduct2) && $setProduct2 != ''){
+        	        foreach($availibility as $hour => $salesmen){
+                	        foreach($salesmen as $index => $info){
+                        	        $good = 'false';
+	                                foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+        	                                if($allowed_product == $setProduct2){
+                	                                $good = 'true';
+                        	                        break;
+                                	        }
+	                                }
+        	                        if($good == 'false' && !$_GET['rep']){
+                	                        unset($availibility[$hour][$index]);
+                        	        }
+	                        }
+        	        }
+	        }
+        	if(isset($setProduct3) && $setProduct2 != ''){
+	                foreach($availibility as $hour => $salesmen){
+        	                foreach($salesmen as $index => $info){
+                	                $good = 'false';
+                        	        foreach($availibility[$hour][$index]['allowed_products'] as $allowed_product){
+	                                        if($allowed_product == $setProduct3){
+        	                                        $good = 'true';
+                	                                break;
+                        	                }
+	                                }
+        	                        if($good == 'false' && !$_GET['rep']){
+                	                        unset($availibility[$hour][$index]);
+                        	        }
+	                        }
+        	        }
+	        }
+		$availibility = array('date' => $date,'availibility' => $availibility);
+		foreach($availibility['availibility'] as $i => $hours){
+	                $hours = array_values($hours);
+			$availibility['availibility'][$i] = $hours;
+		}
+		print_r(json_encode($availibility));
+	}
+$end_time = microtime(true);
+$execution_time = ($end_time - $start_time);
+//echo " Execution time of script = ".$execution_time." sec";
+
+
+?>
